@@ -118,12 +118,8 @@ prepare_repo() {
       die "安装目录有未提交改动，请先处理后再继续：$INSTALL_DIR"
     fi
     git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
-    if git -C "$INSTALL_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
-      git -C "$INSTALL_DIR" checkout "$BRANCH"
-    else
-      git -C "$INSTALL_DIR" checkout -b "$BRANCH" "origin/$BRANCH"
-    fi
-    git -C "$INSTALL_DIR" merge --ff-only "origin/$BRANCH"
+    git -C "$INSTALL_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
+    git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
   elif [ -e "$INSTALL_DIR" ]; then
     die "安装目录已存在但不是 git 仓库：$INSTALL_DIR"
   else
