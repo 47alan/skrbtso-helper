@@ -42,7 +42,7 @@ REAL_CHROME = os.environ.get("SKRBTSO_HELPER_REAL_CHROME", "").lower() in {"1", 
 USER_DATA_DIR = os.environ.get("SKRBTSO_HELPER_USER_DATA_DIR", "").strip()
 AUTH_TOKEN = os.environ.get("SKRBTSO_HELPER_TOKEN", "").strip()
 DEBUG_ENABLED = os.environ.get("SKRBTSO_HELPER_DEBUG", "").lower() in {"1", "true", "yes"}
-MAX_CONCURRENT = max(1, int(os.environ.get("SKRBTSO_HELPER_MAX_CONCURRENT", "1")))
+MAX_CONCURRENT = max(1, int(os.environ.get("SKRBTSO_HELPER_MAX_CONCURRENT", "2")))
 MAX_POPUP_DETAILS = max(1, int(os.environ.get("SKRBTSO_HELPER_MAX_POPUP_DETAILS", "16")))
 REQUEST_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT)
 MAGNET_RE = re.compile(r"magnet:\?xt=urn:btih:[a-z0-9]{32,40}[^\s\"'<>]*", re.I)

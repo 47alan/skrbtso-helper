@@ -49,4 +49,4 @@ cat /data/media-stack/skrbtso-helper.install-info
 Bearer token：install-info 里的 token=
 ```
 
-详情弹窗等待默认是 `12` 秒。完整部署说明见 [docs/skrbtso-scrapling-helper-deploy.md](docs/skrbtso-scrapling-helper-deploy.md)。
+详情弹窗等待默认是 `12` 秒，搜索并发默认是 `2`。完整部署说明见 [docs/skrbtso-scrapling-helper-deploy.md](docs/skrbtso-scrapling-helper-deploy.md)。

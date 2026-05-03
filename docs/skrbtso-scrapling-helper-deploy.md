@@ -97,12 +97,18 @@ helper 容器只把端口绑定到服务器本机：
 https://<helper-domain>/skrbtso/search
 ```
 
-## 默认抓取等待
+## 默认抓取参数
 
 详情弹窗等待时间默认是 12 秒：
 
 ```text
 SKRBTSO_HELPER_DETAIL_WAIT=12
+```
+
+搜索并发默认是 2，避免前一个抓取未结束时立即出现 `Helper is busy; retry later`：
+
+```text
+SKRBTSO_HELPER_MAX_CONCURRENT=2
 ```
 
 需要调整时，可以改 `/data/media-stack/skrbtso-helper.env` 后重新执行：
