@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 APP_NAME="skrbtso-scrapling-helper"
 HELPER_SERVICE="skrbtso-helper"
-DEFAULT_INSTALL_DIR="/opt/skrbtso-helper-repo"
+DEFAULT_INSTALL_DIR="/data/media-stack/skrbtso-helper-repo"
 DEFAULT_REPO_URL="https://github.com/47alan/skrbtso-helper.git"
 DEFAULT_BRANCH="main"
 DEFAULT_DETAIL_WAIT="12"
@@ -94,10 +94,11 @@ prepare_repo() {
     return
   fi
 
-  prompt_default "REPO_URL" "请输入 GitHub 仓库地址" "$DEFAULT_REPO_URL"
+  REPO_URL="${REPO_URL:-$DEFAULT_REPO_URL}"
   [ -n "$REPO_URL" ] || die "GitHub 仓库地址不能为空。"
-  prompt_default "BRANCH" "请输入分支名" "$DEFAULT_BRANCH"
+  BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
   prompt_default "INSTALL_DIR" "请输入安装目录" "$DEFAULT_INSTALL_DIR"
+  mkdir -p -- "$(dirname -- "$INSTALL_DIR")"
 
   if [ -d "$INSTALL_DIR/.git" ]; then
     info "更新仓库：$INSTALL_DIR"
@@ -373,7 +374,7 @@ main() {
   HELPER_DIR="$REPO_ROOT/tools/skrbtso-helper"
   [ -f "$HELPER_DIR/Dockerfile" ] || die "找不到 Dockerfile：$HELPER_DIR"
 
-  prompt_default "HELPER_DOMAIN" "请输入已经解析好的 helper 域名，例如 gettt.binanceforest.com" ""
+  prompt_default "HELPER_DOMAIN" "请输入已经解析好的 helper 域名" ""
   validate_domain "$HELPER_DOMAIN" || die "域名格式无效：$HELPER_DOMAIN"
 
   prompt_default "MEDIA_STACK_COMPOSE" "请输入媒体栈 docker-compose.yml 路径" "$DEFAULT_MEDIA_STACK_COMPOSE"

@@ -21,18 +21,25 @@ sudo bash /tmp/install-skrbtso-helper.sh
 如果已经克隆仓库：
 
 ```bash
-cd /opt/skrbtso-helper-repo
+cd /data/media-stack/skrbtso-helper-repo
 sudo bash tools/skrbtso-helper/install-server.sh
 ```
 
 脚本会询问：
 
-- helper 域名，例如 `gettt.binanceforest.com`
-- GitHub 仓库地址，默认 `https://github.com/47alan/skrbtso-helper.git`
+- helper 域名，输入你已经解析到服务器的域名
+- 安装目录，默认 `/data/media-stack/skrbtso-helper-repo`
 - 媒体栈 Compose 路径，默认 `/data/media-stack/docker-compose.yml`
 - Nginx 配置路径，默认 `/data/media-stack/nginx/conf.d/mediawarp.conf`
 - Nginx 在 Compose 里的服务名，自动检测，默认 `nginx`
 - Nginx 容器内证书路径
+
+GitHub 仓库地址和分支不会询问，默认直接使用：
+
+```text
+https://github.com/47alan/skrbtso-helper.git
+main
+```
 
 默认使用你的证书路径：
 

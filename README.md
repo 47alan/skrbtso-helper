@@ -19,6 +19,7 @@ sudo bash /tmp/install-skrbtso-helper.sh
 脚本默认适配：
 
 ```text
+/data/media-stack/skrbtso-helper-repo
 /data/media-stack/docker-compose.yml
 /data/media-stack/nginx/conf.d/mediawarp.conf
 ```
@@ -31,6 +32,8 @@ ssl_certificate_key /etc/nginx/certs/binanceforest.com.key;
 ```
 
 安装脚本会备份主 `docker-compose.yml`，然后把 `skrbtso-helper` 服务插入到主 Compose 的 `services:` 里；同时备份并追加 `mediawarp.conf` 的 HTTPS 反代块。
+
+GitHub 仓库地址和分支默认直接使用本仓库的 `main`，安装时不会再要求确认。
 
 ## 浏览器脚本设置
 
