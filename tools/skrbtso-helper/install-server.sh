@@ -168,7 +168,7 @@ normalize_helper_domain() {
 detect_nginx_service() {
   local services
   services="$(docker compose -f "$MEDIA_STACK_COMPOSE" config --services 2>/dev/null || true)"
-  for name in nginx mediawarp nginx-proxy; do
+  for name in nginx media-https-proxy mediawarp nginx-proxy; do
     if printf "%s\n" "$services" | grep -qx "$name"; then
       printf "%s" "$name"
       return
@@ -380,6 +380,11 @@ EOF
 
 ensure_nginx_running() {
   info "确认 Nginx 服务运行"
+  if ! docker compose -f "$MEDIA_STACK_COMPOSE" config --services 2>/dev/null | grep -qx "$NGINX_SERVICE"; then
+    echo "当前 Compose 可用服务："
+    docker compose -f "$MEDIA_STACK_COMPOSE" config --services 2>/dev/null || true
+    die "找不到 Nginx 服务：$NGINX_SERVICE。请填上面列表里的 HTTPS 反代服务名。"
+  fi
   compose_cmd up -d "$NGINX_SERVICE"
 }
 
