@@ -28,6 +28,8 @@ sudo bash /tmp/install-skrbtso-helper.sh
 
 安装脚本会备份主 `docker-compose.yml`，然后把 `skrbtso-helper` 服务插入到主 Compose 的 `services:` 里；同时备份并追加 `mediawarp.conf` 的 HTTPS 反代块。
 
+如果反代服务使用自定义 Docker 网络，安装脚本会把 `skrbtso-helper` 自动加入同一个网络，避免 Nginx 无法解析 upstream。
+
 GitHub 仓库地址和分支默认直接使用本仓库的 `main`，安装时不会再要求确认。
 
 安装时输入 helper 域名可以直接粘贴 `https://<你的 helper 域名>`，脚本会自动提取纯域名。

@@ -177,6 +177,73 @@ detect_nginx_service() {
   printf "nginx"
 }
 
+detect_service_network() {
+  local service="$1"
+
+  [ -n "$service" ] || return 0
+
+  docker compose -f "$MEDIA_STACK_COMPOSE" config 2>/dev/null | awk -v service="$service" '
+    function leading_spaces(line, copy) {
+      copy = line
+      sub(/^[ ]*/, "", copy)
+      return length(line) - length(copy)
+    }
+
+    /^[[:space:]]*services:[[:space:]]*$/ {
+      in_services = 1
+      next
+    }
+
+    in_services {
+      indent = leading_spaces($0)
+      if (indent == 0 && $0 !~ /^[[:space:]]*services:[[:space:]]*$/) {
+        in_services = 0
+        in_service = 0
+        in_networks = 0
+      }
+
+      if (!in_services) next
+
+      if (indent == 2) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/:.*/, "", line)
+        if (line == service) {
+          in_service = 1
+          in_networks = 0
+          next
+        }
+        if (in_service) exit
+      }
+
+      if (!in_service) next
+
+      if (indent == 4) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/:.*/, "", line)
+        if (line == "networks") {
+          in_networks = 1
+          next
+        }
+        if (in_networks) exit
+      }
+
+      if (in_networks && indent == 6) {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        sub(/^- */, "", line)
+        sub(/:.*/, "", line)
+        gsub(/[[:space:]]+$/, "", line)
+        if (line != "" && line != "default") {
+          print line
+          exit
+        }
+      }
+    }
+  '
+}
+
 detect_nginx_ssl_value() {
   local directive="$1"
   local conf_file="$2"
@@ -260,6 +327,16 @@ write_media_stack_service() {
       SKRBTSO_HELPER_MAX_CONCURRENT: "${SKRBTSO_HELPER_MAX_CONCURRENT:-1}"
     ports:
       - "127.0.0.1:8787:8787"
+EOF
+
+  if [ -n "${HELPER_NETWORK:-}" ]; then
+    cat >> "$service_block" <<EOF
+    networks:
+      - $HELPER_NETWORK
+EOF
+  fi
+
+  cat >> "$service_block" <<EOF
   # END SKRBTSO HELPER SERVICE
 EOF
 
@@ -419,6 +496,7 @@ endpoint=https://$HELPER_DOMAIN/skrbtso/search
 token=$HELPER_TOKEN
 container=$APP_NAME
 service=$HELPER_SERVICE
+helper_network=${HELPER_NETWORK:-}
 media_stack_compose=$MEDIA_STACK_COMPOSE
 media_stack_compose_backup=${MEDIA_STACK_COMPOSE_BACKUP:-}
 nginx_conf=$MEDIAWARP_NGINX_CONF
@@ -459,6 +537,10 @@ main() {
   detected_ssl_cert="$(detect_nginx_ssl_value "ssl_certificate" "$MEDIAWARP_NGINX_CONF")"
   detected_ssl_key="$(detect_nginx_ssl_value "ssl_certificate_key" "$MEDIAWARP_NGINX_CONF")"
   prompt_default "NGINX_SERVICE" "请输入 Nginx 容器在 compose 里的服务名" "$detected_nginx_service"
+  HELPER_NETWORK="${HELPER_NETWORK:-$(detect_service_network "$NGINX_SERVICE")}"
+  if [ -n "$HELPER_NETWORK" ]; then
+    info "helper 将加入反代服务网络：$HELPER_NETWORK"
+  fi
   prompt_default "SSL_CERT" "请输入 Nginx 容器内 ssl_certificate 路径" "$detected_ssl_cert"
   prompt_default "SSL_KEY" "请输入 Nginx 容器内 ssl_certificate_key 路径" "$detected_ssl_key"
   [ -n "$SSL_CERT" ] || die "ssl_certificate 路径不能为空。"

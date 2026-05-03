@@ -89,6 +89,8 @@ helper 容器只把端口绑定到服务器本机：
 127.0.0.1:8787:8787
 ```
 
+如果 Nginx/HTTPS 反代服务使用了自定义 Docker 网络，安装脚本会自动检测该网络，并把 `skrbtso-helper` 加入同一个网络，避免 Nginx 报 `host not found in upstream "skrbtso-helper"`。
+
 公网访问走 Nginx HTTPS：
 
 ```text
