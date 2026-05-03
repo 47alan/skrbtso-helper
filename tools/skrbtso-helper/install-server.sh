@@ -59,13 +59,27 @@ prompt_default() {
   fi
 
   if [ -n "$default_value" ]; then
-    read -r -p "$prompt [$default_value]: " value
+    value="$(read_prompt "$prompt [$default_value]: ")"
     value="${value:-$default_value}"
   else
-    read -r -p "$prompt: " value
+    value="$(read_prompt "$prompt: ")"
   fi
 
   printf -v "$var_name" "%s" "$value"
+}
+
+read_prompt() {
+  local prompt="$1"
+  local value=""
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf "%s" "$prompt" > /dev/tty
+    IFS= read -r value < /dev/tty || value=""
+  else
+    read -r -p "$prompt" value || value=""
+  fi
+
+  printf "%s" "$value"
 }
 
 detect_repo_root() {
@@ -122,9 +136,37 @@ prepare_repo() {
 
 validate_domain() {
   local domain="$1"
+  local label
+  local labels
+
+  [ -n "$domain" ] || return 1
+  [ "${#domain}" -le 253 ] || return 1
   [[ "$domain" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
   [[ "$domain" == *.* ]] || return 1
   [[ "$domain" != .* && "$domain" != *. ]] || return 1
+  [[ "$domain" != *..* ]] || return 1
+
+  IFS=. read -r -a labels <<< "$domain"
+  for label in "${labels[@]}"; do
+    [ -n "$label" ] || return 1
+    [ "${#label}" -le 63 ] || return 1
+    [[ "$label" != -* && "$label" != *- ]] || return 1
+  done
+}
+
+normalize_helper_domain() {
+  local value="$1"
+
+  value="${value//$'\r'/}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#*://}"
+  value="${value%%/*}"
+  value="${value%%\?*}"
+  value="${value%%#*}"
+  value="${value%%:*}"
+  value="${value%.}"
+  printf "%s" "${value,,}"
 }
 
 detect_nginx_service() {
@@ -397,7 +439,8 @@ main() {
   [ -f "$HELPER_DIR/Dockerfile" ] || die "找不到 Dockerfile：$HELPER_DIR"
 
   prompt_default "HELPER_DOMAIN" "请输入已经解析好的 helper 域名" ""
-  validate_domain "$HELPER_DOMAIN" || die "域名格式无效：$HELPER_DOMAIN"
+  HELPER_DOMAIN="$(normalize_helper_domain "$HELPER_DOMAIN")"
+  validate_domain "$HELPER_DOMAIN" || die "域名格式无效：$HELPER_DOMAIN。请只输入域名，不要带路径或空格。"
 
   prompt_default "MEDIA_STACK_COMPOSE" "请输入媒体栈 docker-compose.yml 路径" "$DEFAULT_MEDIA_STACK_COMPOSE"
   [ -f "$MEDIA_STACK_COMPOSE" ] || die "找不到媒体栈 Compose 文件：$MEDIA_STACK_COMPOSE"

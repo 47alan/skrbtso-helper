@@ -30,6 +30,8 @@ sudo bash /tmp/install-skrbtso-helper.sh
 
 GitHub 仓库地址和分支默认直接使用本仓库的 `main`，安装时不会再要求确认。
 
+安装时输入 helper 域名可以直接粘贴 `https://<你的 helper 域名>`，脚本会自动提取纯域名。
+
 ## 浏览器脚本设置
 
 安装完成后查看：

@@ -27,7 +27,7 @@ sudo bash tools/skrbtso-helper/install-server.sh
 
 脚本会询问：
 
-- helper 域名，输入你已经解析到服务器的域名
+- helper 域名，输入你已经解析到服务器的域名；也可以粘贴 `https://<helper-domain>`，脚本会自动提取纯域名
 - 安装目录，默认 `/data/media-stack/skrbtso-helper-repo`
 - 媒体栈 Compose 路径，默认 `/data/media-stack/docker-compose.yml`
 - Nginx 配置路径，默认 `/data/media-stack/nginx/conf.d/mediawarp.conf`
