@@ -24,12 +24,7 @@ sudo bash /tmp/install-skrbtso-helper.sh
 /data/media-stack/nginx/conf.d/mediawarp.conf
 ```
 
-证书默认路径：
-
-```nginx
-ssl_certificate     /etc/nginx/certs/binanceforest.com.crt;
-ssl_certificate_key /etc/nginx/certs/binanceforest.com.key;
-```
+证书路径不会写死在仓库里。安装脚本会先从服务器现有 `mediawarp.conf` 自动读取 `ssl_certificate` 和 `ssl_certificate_key`；如果读不到，会在安装时提示你输入。
 
 安装脚本会备份主 `docker-compose.yml`，然后把 `skrbtso-helper` 服务插入到主 Compose 的 `services:` 里；同时备份并追加 `mediawarp.conf` 的 HTTPS 反代块。
 

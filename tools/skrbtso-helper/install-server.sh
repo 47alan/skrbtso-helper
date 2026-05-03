@@ -10,8 +10,6 @@ DEFAULT_DETAIL_WAIT="12"
 DEFAULT_TIMEOUT="180"
 DEFAULT_MEDIA_STACK_COMPOSE="/data/media-stack/docker-compose.yml"
 DEFAULT_MEDIAWARP_NGINX_CONF="/data/media-stack/nginx/conf.d/mediawarp.conf"
-DEFAULT_SSL_CERT="/etc/nginx/certs/binanceforest.com.crt"
-DEFAULT_SSL_KEY="/etc/nginx/certs/binanceforest.com.key"
 
 die() {
   echo "ERROR: $*" >&2
@@ -139,6 +137,30 @@ detect_nginx_service() {
     fi
   done
   printf "nginx"
+}
+
+detect_nginx_ssl_value() {
+  local directive="$1"
+  local conf_file="$2"
+
+  awk -v directive="$directive" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]*#.*/, "", line)
+      if (line ~ "^[[:space:]]*" directive "[[:space:]]+") {
+        sub("^[[:space:]]*" directive "[[:space:]]+", "", line)
+        sub(";[[:space:]]*$", "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        gsub(/^"/, "", line)
+        gsub(/"$/, "", line)
+        gsub(/^\047/, "", line)
+        gsub(/\047$/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "$conf_file"
 }
 
 write_env_file() {
@@ -387,10 +409,16 @@ main() {
   [ -f "$MEDIAWARP_NGINX_CONF" ] || die "找不到 Nginx 配置文件：$MEDIAWARP_NGINX_CONF"
 
   local detected_nginx_service
+  local detected_ssl_cert
+  local detected_ssl_key
   detected_nginx_service="$(detect_nginx_service)"
+  detected_ssl_cert="$(detect_nginx_ssl_value "ssl_certificate" "$MEDIAWARP_NGINX_CONF")"
+  detected_ssl_key="$(detect_nginx_ssl_value "ssl_certificate_key" "$MEDIAWARP_NGINX_CONF")"
   prompt_default "NGINX_SERVICE" "请输入 Nginx 容器在 compose 里的服务名" "$detected_nginx_service"
-  prompt_default "SSL_CERT" "请输入 Nginx 容器内 ssl_certificate 路径" "$DEFAULT_SSL_CERT"
-  prompt_default "SSL_KEY" "请输入 Nginx 容器内 ssl_certificate_key 路径" "$DEFAULT_SSL_KEY"
+  prompt_default "SSL_CERT" "请输入 Nginx 容器内 ssl_certificate 路径" "$detected_ssl_cert"
+  prompt_default "SSL_KEY" "请输入 Nginx 容器内 ssl_certificate_key 路径" "$detected_ssl_key"
+  [ -n "$SSL_CERT" ] || die "ssl_certificate 路径不能为空。"
+  [ -n "$SSL_KEY" ] || die "ssl_certificate_key 路径不能为空。"
 
   HELPER_TOKEN="${HELPER_TOKEN:-$(openssl rand -hex 32)}"
 

@@ -32,7 +32,7 @@ sudo bash tools/skrbtso-helper/install-server.sh
 - 媒体栈 Compose 路径，默认 `/data/media-stack/docker-compose.yml`
 - Nginx 配置路径，默认 `/data/media-stack/nginx/conf.d/mediawarp.conf`
 - Nginx 在 Compose 里的服务名，自动检测，默认 `nginx`
-- Nginx 容器内证书路径
+- Nginx 容器内证书路径。脚本会优先从现有 `mediawarp.conf` 自动读取，读不到才需要手动输入。
 
 GitHub 仓库地址和分支不会询问，默认直接使用：
 
@@ -41,12 +41,7 @@ https://github.com/47alan/skrbtso-helper.git
 main
 ```
 
-默认使用你的证书路径：
-
-```nginx
-ssl_certificate     /etc/nginx/certs/binanceforest.com.crt;
-ssl_certificate_key /etc/nginx/certs/binanceforest.com.key;
-```
+证书路径不会写死在仓库里，也不会提交到 GitHub。
 
 ## 脚本会修改什么
 
