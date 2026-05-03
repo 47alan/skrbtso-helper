@@ -10,4 +10,5 @@ ENV PYTHONUNBUFFERED=1 \
 
 EXPOSE 8787
 
-CMD ["python", "/app/skrbtso_scrapling_helper.py"]
+ENTRYPOINT []
+CMD ["/app/.venv/bin/python", "/app/skrbtso_scrapling_helper.py"]
