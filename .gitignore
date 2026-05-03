@@ -1,0 +1,66 @@
+# Ignore everything by default. This repository is meant to publish only the
+# SkrBTSo helper, its deployment script, docs, and the matching userscript.
+*
+
+# Keep repository entry files.
+!.gitignore
+!.dockerignore
+!.gitattributes
+!README.md
+
+# Keep helper source and deployment assets.
+!tools/
+tools/*
+!tools/skrbtso_scrapling_helper.py
+!tools/skrbtso-helper/
+!tools/skrbtso-helper/Dockerfile
+!tools/skrbtso-helper/docker-compose.yml
+!tools/skrbtso-helper/install-server.sh
+!tools/skrbtso-helper/.env.example
+
+# Keep the Tampermonkey script used by this helper.
+!userscripts/
+userscripts/*
+!userscripts/001-005-javdb-local-skrbtso-helper-test.user.js
+
+# Keep project docs.
+!docs/
+docs/*
+!docs/*.md
+
+# Never publish local secrets, install output, certs, logs, caches, or backups.
+.env
+*.env
+*.local
+*.log
+*.bak
+*.backup
+*.install-info
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.venv/
+venv/
+env/
+logs/
+outputs/
+.playwright-mcp/
+
+# Local/reference material in this workspace.
+Scrapling/
+_external/
+
+# IDE and OS files.
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db

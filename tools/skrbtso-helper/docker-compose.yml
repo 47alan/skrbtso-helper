@@ -1,0 +1,22 @@
+services:
+  skrbtso-helper:
+    build:
+      context: ../..
+      dockerfile: tools/skrbtso-helper/Dockerfile
+    image: local/skrbtso-scrapling-helper:latest
+    container_name: skrbtso-scrapling-helper
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai
+      SKRBTSO_HELPER_HOST: 0.0.0.0
+      SKRBTSO_HELPER_PORT: 8787
+      SKRBTSO_HELPER_TIMEOUT: ${SKRBTSO_HELPER_TIMEOUT:-180}
+      SKRBTSO_HELPER_DETAIL_WAIT: ${SKRBTSO_HELPER_DETAIL_WAIT:-12}
+      SKRBTSO_HELPER_STEALTH_FIRST: ${SKRBTSO_HELPER_STEALTH_FIRST:-1}
+      SKRBTSO_HELPER_FORM_FIRST: ${SKRBTSO_HELPER_FORM_FIRST:-1}
+      SKRBTSO_HELPER_MAX_CONCURRENT: ${SKRBTSO_HELPER_MAX_CONCURRENT:-1}
+    ports:
+      - "127.0.0.1:8787:8787"
