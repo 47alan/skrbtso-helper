@@ -129,7 +129,9 @@ http://127.0.0.1:8787/skrbtso/search?q=JUR-070%20UC&max=3
 ```
 
 5. helper 返回 JSON 给油猴脚本。
-6. 油猴脚本只负责展示、复制、导出、提交 115。
+6. 油猴脚本负责展示、复制、导出、提交 115，以及离线完成后的自动重命名/小文件清理。
+
+115 相关动作继续使用当前浏览器登录态完成；服务器 helper 不保存 115 Cookie，不接收 115 账号密码，也不处理扫码登录。
 
 ## 本机测试落地方式
 
@@ -160,16 +162,18 @@ http://127.0.0.1:8787/skrbtso/search?q=JUR-070%20UC&max=3
 4. 显示前 3 条 magnet。
 5. 同时显示“原始番号 / 结果番号 / 匹配状态”。
 6. 支持复制纯 magnet、复制对比结果、导出对比 TXT。
+7. 支持用当前浏览器 115 登录态提交离线，并在页面保持打开时执行自动重命名/小文件清理。
 
 ### 二次 Cloudflare 处理
 
-当前 helper 已按这个方式处理二次验证：
+当前 helper 已按这个方式处理二次验证和加速：
 
 1. 首页打开时先不强制认为一定有 Cloudflare challenge。
 2. 提交搜索表单后，检查结果页是否进入 `Performing security verification`。
 3. 如果进入验证页，就在同一个浏览器会话里再次触发 Scrapling 的 Cloudflare solver。
-4. 验证通过后再等待真实结果页。
-5. 真实结果页出现后才点击前几条详情 popup。
+4. 验证通过后复用持久浏览器会话和浏览器资料目录。
+5. 真实结果页出现后，优先在页面内用浏览器 `fetch` 抓详情页 magnet。
+6. 只有 `fetch` 没拿到 magnet 的候选项，才点击详情 popup 兜底。
 
 如果本机 headless 模式后续再次不稳定，可以临时用可见浏览器启动：
 
@@ -178,7 +182,7 @@ $env:SKRBTSO_HELPER_HEADLESS='0'
 python tools\skrbtso_scrapling_helper.py
 ```
 
-也可以指定持久浏览器目录，复用 Cloudflare 通过后的状态：
+默认会使用仓库根目录 `.skrbtso-browser` 作为持久浏览器目录；也可以手动指定目录：
 
 ```powershell
 $env:SKRBTSO_HELPER_USER_DATA_DIR='D:\PY_program\115emby\.skrbtso-browser'
@@ -195,6 +199,13 @@ http://127.0.0.1:8787/skrbtso/search?q=JUR-070%20UC&max=3
 
 返回 3 条结果，标题均为 `JUR-070`，`queryCode/resultCode/titleMatched` 均可用，3 条均包含完整 magnet。
 
+2026-05-05 复用持久会话和浏览器 `fetch` 详情页后，本机 HTTP 随机两次查询：
+
+```text
+JUR-380 UC：约 5.94 秒，返回 3 条
+SSIS-950 UC：约 4.55 秒，返回 3 条
+```
+
 ## Helper 返回结果建议字段
 
 每条结果建议包含：
@@ -206,6 +217,7 @@ http://127.0.0.1:8787/skrbtso/search?q=JUR-070%20UC&max=3
   "queryCode": "JUR-070",
   "resultCode": "JUR-070",
   "titleMatched": true,
+  "fileSize": "2.36 GB",
   "detailUrl": "https://skrbtso.top/detail/...",
   "source": "https://skrbtso.top/detail/...",
   "magnet": "magnet:?xt=urn:btih:..."

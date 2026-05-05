@@ -24,15 +24,9 @@ sudo bash /tmp/install-skrbtso-helper.sh
 /data/media-stack/nginx/conf.d/mediawarp.conf
 ```
 
-证书路径不会写死在仓库里。安装脚本会先从服务器现有 `mediawarp.conf` 自动读取 `ssl_certificate` 和 `ssl_certificate_key`；如果读不到，会在安装时提示你输入。
+安装脚本会备份主 `docker-compose.yml` 和 `mediawarp.conf`，把 `skrbtso-helper` 服务插入到主 Compose，并追加 HTTPS 反代块。证书路径会优先从现有 `mediawarp.conf` 读取，读不到才提示输入。
 
-安装脚本会备份主 `docker-compose.yml`，然后把 `skrbtso-helper` 服务插入到主 Compose 的 `services:` 里；同时备份并追加 `mediawarp.conf` 的 HTTPS 反代块。
-
-如果反代服务使用自定义 Docker 网络，安装脚本会把 `skrbtso-helper` 自动加入同一个网络，避免 Nginx 无法解析 upstream。
-
-GitHub 仓库地址和分支默认直接使用本仓库的 `main`，安装时不会再要求确认。
-
-安装时输入 helper 域名可以直接粘贴 `https://<你的 helper 域名>`，脚本会自动提取纯域名。
+如果反代服务使用自定义 Docker 网络，安装脚本会把 `skrbtso-helper` 加入同一个网络，避免 Nginx 无法解析 upstream。安装时输入 helper 域名可以直接粘贴 `https://<你的 helper 域名>`，脚本会自动提取纯域名。
 
 ## 浏览器脚本设置
 
@@ -42,11 +36,14 @@ GitHub 仓库地址和分支默认直接使用本仓库的 `main`，安装时不
 cat /data/media-stack/skrbtso-helper.install-info
 ```
 
-在 Tampermonkey 面板点 `抓取设置`，填入：
+在 Tampermonkey 面板点 `抓取设置`：
 
 ```text
-抓取服务地址：https://<你的 helper 域名>/skrbtso/search
-Bearer token：install-info 里的 token=
+取消勾选“使用本机服务”
+服务器服务地址：https://<你的 helper 域名>/skrbtso/search
+服务器 Bearer token：install-info 里的 token=
 ```
 
-详情弹窗等待默认是 `12` 秒，搜索并发默认是 `2`。完整部署说明见 [docs/skrbtso-scrapling-helper-deploy.md](docs/skrbtso-scrapling-helper-deploy.md)。
+服务器只负责磁力抓取。`115离线`、自动重命名、自动清理小文件仍由油猴脚本使用当前浏览器的 115 登录态执行；服务器不保存 115 Cookie，也不处理 115 扫码登录。
+
+当前默认启用持久 Scrapling 浏览器会话，搜索结果等待 `45` 秒、详情兜底弹窗等待 `8` 秒、并发 `1`，并会把浏览器资料目录挂载到 `/data/.skrbtso-browser` 复用验证状态。完整部署说明见 [docs/skrbtso-scrapling-helper-deploy.md](docs/skrbtso-scrapling-helper-deploy.md)。

@@ -6,6 +6,8 @@ userscripts/
 logs/
 outputs/
 .playwright-mcp/
+.skrbtso-browser/
+**/skrbtso-browser/
 Scrapling/
 _external/
 __pycache__/

@@ -53,6 +53,18 @@ env/
 logs/
 outputs/
 .playwright-mcp/
+.skrbtso-browser/
+**/skrbtso-browser/
+
+# Server deployment outputs that may contain real tokens or local paths.
+skrbtso-helper.env
+skrbtso-helper.install-info
+**/skrbtso-helper.env
+**/skrbtso-helper.install-info
+*token*
+*secret*
+*cookie*
+*Cookie*
 
 # Local/reference material in this workspace.
 Scrapling/
@@ -64,3 +76,4 @@ _external/
 *.code-workspace
 .DS_Store
 Thumbs.db
+.ace-tool/

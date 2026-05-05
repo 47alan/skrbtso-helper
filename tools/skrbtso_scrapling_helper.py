@@ -8,6 +8,8 @@ Optional:
   set SKRBTSO_HELPER_HOST=127.0.0.1
   set SKRBTSO_HELPER_PORT=8787
   set SKRBTSO_HELPER_TOKEN=your-token
+  set SKRBTSO_HELPER_SEARCH_ORIGIN=https://skrbtso.top
+  set SKRBTSO_HELPER_ALLOWED_SEARCH_HOSTS=skrbtso.top
 
 The userscript calls:
   http://127.0.0.1:8787/skrbtso/search?q=ABC-123%20UC&max=10
@@ -15,6 +17,7 @@ The userscript calls:
 
 from __future__ import annotations
 
+import copy
 import hmac
 import html
 import json
@@ -22,31 +25,89 @@ import os
 import re
 import sys
 import threading
+import time
 import traceback
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
 
 
-SEARCH_ORIGIN = "https://skrbtso.top"
+def env_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def normalize_origin(value: str) -> str:
+    text = (value or "").strip().rstrip("/")
+    if not text:
+        return "https://skrbtso.top"
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return "https://skrbtso.top"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{parsed.hostname.lower()}{port}"
+
+
+SEARCH_ORIGIN = normalize_origin(os.environ.get("SKRBTSO_HELPER_SEARCH_ORIGIN", "https://skrbtso.top"))
+SEARCH_HOST = urlparse(SEARCH_ORIGIN).hostname or "skrbtso.top"
+ALLOWED_SEARCH_HOSTS = {
+    host.strip().lower()
+    for host in os.environ.get("SKRBTSO_HELPER_ALLOWED_SEARCH_HOSTS", "skrbtso.top").split(",")
+    if host.strip()
+}
+ALLOWED_SEARCH_HOSTS.add(SEARCH_HOST)
 HOST = os.environ.get("SKRBTSO_HELPER_HOST", "127.0.0.1")
-PORT = int(os.environ.get("SKRBTSO_HELPER_PORT", "8787"))
-DEFAULT_MAX_RESULTS = 10
-REQUEST_TIMEOUT_SECONDS = int(os.environ.get("SKRBTSO_HELPER_TIMEOUT", "60"))
-FORM_RESULT_WAIT_SECONDS = int(os.environ.get("SKRBTSO_HELPER_FORM_RESULT_WAIT", "90"))
-DETAIL_POPUP_WAIT_SECONDS = int(os.environ.get("SKRBTSO_HELPER_DETAIL_WAIT", "12"))
+PORT = env_int("SKRBTSO_HELPER_PORT", 8787, 1, 65535)
+MAX_RESULTS_LIMIT = env_int("SKRBTSO_HELPER_MAX_RESULTS_LIMIT", 20, 1, 100)
+DEFAULT_MAX_RESULTS = min(env_int("SKRBTSO_HELPER_DEFAULT_MAX_RESULTS", 10, 1, 100), MAX_RESULTS_LIMIT)
+REQUEST_TIMEOUT_SECONDS = env_int("SKRBTSO_HELPER_TIMEOUT", 60, 1)
+FORM_RESULT_WAIT_SECONDS = env_int("SKRBTSO_HELPER_FORM_RESULT_WAIT", 45, 1)
+DETAIL_POPUP_WAIT_SECONDS = env_int("SKRBTSO_HELPER_DETAIL_WAIT", 8, 1)
 USE_STEALTH_FIRST = os.environ.get("SKRBTSO_HELPER_STEALTH_FIRST", "").lower() in {"1", "true", "yes"}
 USE_FORM_SEARCH_FIRST = os.environ.get("SKRBTSO_HELPER_FORM_FIRST", "1").lower() in {"1", "true", "yes"}
 HEADLESS = os.environ.get("SKRBTSO_HELPER_HEADLESS", "1").lower() not in {"0", "false", "no"}
 REAL_CHROME = os.environ.get("SKRBTSO_HELPER_REAL_CHROME", "").lower() in {"1", "true", "yes"}
-USER_DATA_DIR = os.environ.get("SKRBTSO_HELPER_USER_DATA_DIR", "").strip()
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_USER_DATA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".skrbtso-browser"))
+USER_DATA_DIR = os.environ.get("SKRBTSO_HELPER_USER_DATA_DIR", DEFAULT_USER_DATA_DIR).strip()
 AUTH_TOKEN = os.environ.get("SKRBTSO_HELPER_TOKEN", "").strip()
 DEBUG_ENABLED = os.environ.get("SKRBTSO_HELPER_DEBUG", "").lower() in {"1", "true", "yes"}
-MAX_CONCURRENT = max(1, int(os.environ.get("SKRBTSO_HELPER_MAX_CONCURRENT", "2")))
-MAX_POPUP_DETAILS = max(1, int(os.environ.get("SKRBTSO_HELPER_MAX_POPUP_DETAILS", "16")))
+MAX_CONCURRENT = env_int("SKRBTSO_HELPER_MAX_CONCURRENT", 2, 1)
+MAX_POPUP_DETAILS = env_int("SKRBTSO_HELPER_MAX_POPUP_DETAILS", 16, 1)
+EXTRA_POPUP_CANDIDATES = env_int("SKRBTSO_HELPER_EXTRA_POPUP_CANDIDATES", 2, 0)
+CACHE_TTL_SECONDS = env_int("SKRBTSO_HELPER_CACHE_TTL", 21600, 0)
+CACHE_MAX_ENTRIES = env_int("SKRBTSO_HELPER_CACHE_MAX_ENTRIES", 256, 1)
+RESULT_POLL_INTERVAL_MS = env_int("SKRBTSO_HELPER_RESULT_POLL_MS", 500, 250)
+KEEP_SESSION = os.environ.get("SKRBTSO_HELPER_KEEP_SESSION", "1").lower() in {"1", "true", "yes"}
+CORS_ALLOW_ORIGIN = os.environ.get("SKRBTSO_HELPER_CORS_ORIGIN", "*").strip() or "*"
+CORS_ALLOW_HEADERS = os.environ.get(
+    "SKRBTSO_HELPER_CORS_HEADERS",
+    "Authorization, Content-Type",
+).strip() or "Authorization, Content-Type"
 REQUEST_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT)
+CACHE_LOCK = threading.Lock()
+SESSION_LOCK = threading.Lock()
+SESSION_FETCH_LOCK = threading.Lock()
+RESULT_CACHE: dict[tuple[str, int, str], tuple[float, dict[str, Any]]] = {}
+STEALTH_SESSION: Any | None = None
 MAGNET_RE = re.compile(r"magnet:\?xt=urn:btih:[a-z0-9]{32,40}[^\s\"'<>]*", re.I)
 CODE_RE = re.compile(r"\b([A-Z]{2,12})[-_\s]?(\d{2,6})\b", re.I)
+SIZE_PATTERN = r"(?<![A-Z0-9.])(\d+(?:\.\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB|Bytes?|Byte|B|T|G|M)(?![A-Z0-9])"
+SIZE_RE = re.compile(SIZE_PATTERN, re.I)
+LABELED_SIZE_RE = re.compile(
+    r"(?:文件大小|檔案大小|档案大小|大小|File\s*Size|Size)\s*[:：]?\s*"
+    r"(?:&nbsp;|\s|<[^>]+>)*"
+    + SIZE_PATTERN,
+    re.I,
+)
 ANCHOR_RE = re.compile(r"<a\b[^>]*?href=[\"']?([^\"'\s>]+)[\"']?[^>]*>(.*?)</a>", re.I | re.S)
 TAG_RE = re.compile(r"<[^>]+>")
 
@@ -113,12 +174,25 @@ def build_query_variants(query: str) -> list[str]:
 
 def is_search_host(url: str) -> bool:
     host = urlparse(url).hostname or ""
-    return host == "skrbtso.top" or host.endswith(".skrbtso.top")
+    return any(host == allowed or host.endswith(f".{allowed}") for allowed in ALLOWED_SEARCH_HOSTS)
 
 
 def is_search_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and is_search_host(url)
+
+
+def normalize_first_search_url(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    current_host = parsed.hostname or ""
+    if current_host == SEARCH_HOST or current_host.endswith(f".{SEARCH_HOST}"):
+        return url
+    suffix = parsed.path or "/"
+    if parsed.query:
+        suffix += f"?{parsed.query}"
+    return urljoin(SEARCH_ORIGIN, suffix)
 
 
 def is_cloudflare_check(text: str) -> bool:
@@ -139,6 +213,72 @@ def clean_text(value: str) -> str:
 def extract_code(text: str) -> str:
     match = CODE_RE.search((text or "").upper())
     return f"{match.group(1)}-{match.group(2)}" if match else ""
+
+
+def normalize_size_match(match: re.Match[str], number_group: int = 1, unit_group: int = 2) -> str:
+    number = match.group(number_group)
+    if "." in number:
+        number = number.rstrip("0").rstrip(".")
+    unit = match.group(unit_group).upper()
+    unit_map = {
+        "T": "TB",
+        "G": "GB",
+        "M": "MB",
+        "TIB": "TiB",
+        "GIB": "GiB",
+        "MIB": "MiB",
+        "KIB": "KiB",
+        "TB": "TB",
+        "GB": "GB",
+        "MB": "MB",
+        "KB": "KB",
+        "BYTE": "Byte",
+        "BYTES": "Bytes",
+        "B": "B",
+    }
+    return f"{number} {unit_map.get(unit, unit)}"
+
+
+def size_match_bytes(match: re.Match[str], number_group: int = 1, unit_group: int = 2) -> float:
+    unit = match.group(unit_group).upper()
+    factors = {
+        "T": 1024 ** 4,
+        "TB": 1024 ** 4,
+        "TIB": 1024 ** 4,
+        "G": 1024 ** 3,
+        "GB": 1024 ** 3,
+        "GIB": 1024 ** 3,
+        "M": 1024 ** 2,
+        "MB": 1024 ** 2,
+        "MIB": 1024 ** 2,
+        "KB": 1024,
+        "KIB": 1024,
+        "BYTE": 1,
+        "BYTES": 1,
+        "B": 1,
+    }
+    return float(match.group(number_group)) * factors.get(unit, 1)
+
+
+def normalize_file_size(value: str) -> str:
+    text = clean_text(value).replace(",", "")
+    match = SIZE_RE.search(text)
+    return normalize_size_match(match) if match else ""
+
+
+def extract_file_size(text: str) -> str:
+    source = html.unescape(text or "").replace(",", "")
+    labeled = LABELED_SIZE_RE.search(source)
+    if labeled:
+        return normalize_size_match(labeled, 1, 2)
+
+    cleaned = clean_text(source)
+    matches = list(SIZE_RE.finditer(cleaned))
+    if not matches:
+        return ""
+
+    largest = max(matches, key=size_match_bytes)
+    return normalize_size_match(largest)
 
 
 def annotate_result(item: dict[str, Any], query: str) -> dict[str, Any]:
@@ -206,21 +346,55 @@ def looks_like_result_link(raw_href: str, text: str, base_url: str) -> bool:
     return bool(re.search(r"detail|hash|torrent|magnet|info|view|bt|show|file|[a-f0-9]{24,}", path, re.I) or len(text) >= 10)
 
 
+def candidate_contexts(text: str, start: int, end: int) -> list[str]:
+    source = text or ""
+    lower_source = source.lower()
+    contexts: list[str] = []
+
+    for tag in ("tr", "li", "article", "section", "div"):
+        block_start = lower_source.rfind(f"<{tag}", 0, start)
+        block_end = lower_source.find(f"</{tag}>", end)
+        if block_start < 0 or block_end < 0:
+            continue
+        block_end += len(tag) + 3
+        if end <= block_end and 0 < block_end - block_start <= 6_000:
+            contexts.append(source[block_start:block_end])
+
+    contexts.append(source[max(0, start - 800):min(len(source), end + 1200)])
+    return unique_texts(contexts)
+
+
+def extract_candidate_file_size(text: str, start: int, end: int, body: str = "") -> str:
+    for candidate in [body, *candidate_contexts(text, start, end)]:
+        file_size = extract_file_size(candidate)
+        if file_size:
+            return file_size
+    return ""
+
+
 def parse_search_candidates(text: str, base_url: str) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     seen: set[str] = set()
+    decoded_text = html.unescape(text or "")
 
-    for index, magnet in enumerate(parse_magnets(text), start=1):
+    for index, match in enumerate(MAGNET_RE.finditer(decoded_text), start=1):
+        magnet = normalize_magnet(match.group(0))
+        if not magnet:
+            continue
         key = magnet.lower()
+        if key in seen:
+            continue
         seen.add(key)
         out.append({
             "title": f"磁力结果 {index}",
             "detailUrl": "",
             "magnet": magnet,
             "source": base_url,
+            "fileSize": extract_candidate_file_size(decoded_text, match.start(), match.end()),
         })
 
-    for raw_href, body in ANCHOR_RE.findall(text or ""):
+    for match in ANCHOR_RE.finditer(text or ""):
+        raw_href, body = match.group(1), match.group(2)
         title = clean_text(body)[:160] or "搜索结果"
         raw_href = html.unescape(raw_href)
         if not looks_like_result_link(raw_href, title, base_url):
@@ -237,6 +411,7 @@ def parse_search_candidates(text: str, base_url: str) -> list[dict[str, str]]:
             "detailUrl": detail_url,
             "magnet": magnet,
             "source": base_url,
+            "fileSize": extract_candidate_file_size(text or "", match.start(), match.end(), body),
         })
 
     return out
@@ -260,6 +435,15 @@ def score_result(item: dict[str, str], query: str) -> int:
     if re.search(r"4K|FHD|1080|2160", haystack, re.I):
         score += 8
     return score
+
+
+def candidate_fetch_limit(max_results: int) -> int:
+    return min(MAX_POPUP_DETAILS, max(1, max_results + EXTRA_POPUP_CANDIDATES))
+
+
+def prioritize_candidates(candidates: list[dict[str, str]], query: str, max_results: int) -> list[dict[str, str]]:
+    limit = min(len(candidates), candidate_fetch_limit(max_results))
+    return sorted(candidates, key=lambda item: score_result(item, query), reverse=True)[:limit]
 
 
 def fetch_page(url: str) -> tuple[str, str, str, int | None]:
@@ -301,6 +485,72 @@ def build_stealth_kwargs(timeout_seconds: int, solve_cloudflare: bool = True) ->
     if USER_DATA_DIR:
         kwargs["user_data_dir"] = USER_DATA_DIR
     return kwargs
+
+
+def cache_key(query: str, max_results: int, first_url: str) -> tuple[str, int, str]:
+    return normalize_query(query).upper(), max_results, first_url
+
+
+def get_cached_result(query: str, max_results: int, first_url: str) -> dict[str, Any] | None:
+    if CACHE_TTL_SECONDS <= 0:
+        return None
+
+    key = cache_key(query, max_results, first_url)
+    now = time.monotonic()
+    with CACHE_LOCK:
+        cached = RESULT_CACHE.get(key)
+        if not cached:
+            return None
+        cached_at, payload = cached
+        if now - cached_at > CACHE_TTL_SECONDS:
+            RESULT_CACHE.pop(key, None)
+            return None
+        out = copy.deepcopy(payload)
+    out.setdefault("debug", {}).setdefault("attempted", []).insert(0, {"fetcher": "memory-cache", "hit": True})
+    return out
+
+
+def put_cached_result(query: str, max_results: int, first_url: str, payload: dict[str, Any]) -> None:
+    if CACHE_TTL_SECONDS <= 0 or not payload.get("ok"):
+        return
+
+    debug = payload.setdefault("debug", {})
+    debug["cacheTtlSeconds"] = CACHE_TTL_SECONDS
+    with CACHE_LOCK:
+        now = time.monotonic()
+        RESULT_CACHE[cache_key(query, max_results, first_url)] = (now, copy.deepcopy(payload))
+        while len(RESULT_CACHE) > CACHE_MAX_ENTRIES:
+            oldest_key = min(RESULT_CACHE, key=lambda key: RESULT_CACHE[key][0])
+            RESULT_CACHE.pop(oldest_key, None)
+
+
+def get_stealth_session(timeout_seconds: int) -> Any:
+    global STEALTH_SESSION
+    from scrapling.fetchers import StealthySession
+
+    if not KEEP_SESSION:
+        session = StealthySession(**build_stealth_kwargs(timeout_seconds, False))
+        session.start()
+        return session
+
+    with SESSION_LOCK:
+        if STEALTH_SESSION is None:
+            session = StealthySession(**build_stealth_kwargs(timeout_seconds, False))
+            session.start()
+            STEALTH_SESSION = session
+        return STEALTH_SESSION
+
+
+def reset_stealth_session() -> None:
+    global STEALTH_SESSION
+    with SESSION_LOCK:
+        session = STEALTH_SESSION
+        STEALTH_SESSION = None
+    if session is not None:
+        try:
+            session.close()
+        except Exception:
+            pass
 
 
 def stealth_fetch(url: str, timeout_seconds: int, page_action: Any | None = None) -> Any:
@@ -356,49 +606,103 @@ def fetch_search_by_form(query: str) -> tuple[str, str, str, int | None]:
     return page.text or "", str(page.url or SEARCH_ORIGIN), "stealth-form", getattr(page, "status", None)
 
 
-def wait_for_search_results(page: Any) -> bool:
-    waited = 0
-    while waited <= FORM_RESULT_WAIT_SECONDS:
-        try:
-            page.wait_for_load_state("networkidle", timeout=3_000)
-        except Exception:
-            pass
-
-        text = browser_body_text(page)
-        try:
-            detail_count = page.locator('a[href^="/detail/"]').count()
-        except Exception:
-            detail_count = 0
-
-        if detail_count > 0 or "找到约" in text:
+def has_search_results(page: Any) -> bool:
+    try:
+        if page.locator('a[href^="/detail/"]').count() > 0:
             return True
+    except Exception:
+        pass
+    return "找到约" in browser_body_text(page, timeout_ms=800)
 
-        page.wait_for_timeout(5_000)
-        waited += 5
 
-    return False
+def wait_for_search_results(page: Any) -> bool:
+    deadline = time.monotonic() + FORM_RESULT_WAIT_SECONDS
+    while time.monotonic() <= deadline:
+        if has_search_results(page):
+            return True
+        page.wait_for_timeout(RESULT_POLL_INTERVAL_MS)
+    return has_search_results(page)
 
 
 def wait_for_detail_magnet(page: Any) -> tuple[str, str]:
     waited = 0
     last_text = ""
     while waited <= DETAIL_POPUP_WAIT_SECONDS:
-        try:
-            page.wait_for_load_state("networkidle", timeout=3_000)
-        except Exception:
-            pass
-
         text = browser_body_text(page)
         html_text = browser_html(page)
         magnets = parse_magnets(f"{html_text}\n{text}")
         if magnets:
             return magnets[0], text
 
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=1_000)
+        except Exception:
+            pass
+
         last_text = text
-        page.wait_for_timeout(2_000)
-        waited += 2
+        page.wait_for_timeout(1_000)
+        waited += 1
 
     return "", last_text
+
+
+def fetch_detail_pages_in_browser(page: Any, candidates: list[dict[str, str]], debug: dict[str, Any]) -> dict[str, dict[str, str]]:
+    detail_urls = [item.get("detailUrl", "") for item in candidates if item.get("detailUrl")]
+    if not detail_urls:
+        return {}
+
+    try:
+        responses = page.evaluate("""async (urls) => {
+            const results = [];
+            for (const url of urls) {
+                try {
+                    const response = await fetch(url, {
+                        credentials: 'include',
+                        headers: {Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'},
+                    });
+                    const text = await response.text();
+                    results.push({url, finalUrl: response.url, status: response.status, text});
+                    if (response.status === 503) {
+                        await new Promise((resolve) => setTimeout(resolve, 250));
+                    }
+                } catch (error) {
+                    results.push({url, error: String(error)});
+                }
+            }
+            return results;
+        }""", detail_urls)
+    except Exception as error:
+        debug["attempted"].append({
+            "url": "browser-fetch-details",
+            "fetcher": "browser-fetch",
+            "error": str(error)[:300],
+        })
+        return {}
+
+    out: dict[str, dict[str, str]] = {}
+    for response in responses or []:
+        url = str(response.get("url", ""))
+        final_url = str(response.get("finalUrl") or url)
+        text = str(response.get("text") or "")
+        error = response.get("error")
+        magnets = parse_magnets(text)
+        debug_item: dict[str, Any] = {
+            "url": url,
+            "finalUrl": final_url,
+            "fetcher": "browser-fetch",
+            "status": response.get("status"),
+            "magnetFound": bool(magnets),
+        }
+        if error:
+            debug_item["error"] = str(error)[:300]
+        debug["attempted"].append(debug_item)
+        if magnets:
+            out[url] = {
+                "magnet": magnets[0],
+                "source": final_url,
+                "fileSize": extract_file_size(text),
+            }
+    return out
 
 
 def click_detail_popup(page: Any, candidate: dict[str, str], debug: dict[str, Any]) -> dict[str, str] | None:
@@ -451,6 +755,7 @@ def click_detail_popup(page: Any, candidate: dict[str, str], debug: dict[str, An
             item = dict(candidate)
             item["magnet"] = magnet
             item["source"] = final_url
+            item["fileSize"] = item.get("fileSize") or extract_file_size(detail_text)
             if not item.get("title"):
                 title = clean_text(detail_text).split("资源详情", 1)[0].strip()
                 item["title"] = title[:160] or "搜索结果"
@@ -467,9 +772,30 @@ def click_detail_popup(page: Any, candidate: dict[str, str], debug: dict[str, An
     return None
 
 
-def collect_results_by_form(query: str, max_results: int, debug: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
-    from scrapling.fetchers import StealthySession
+def wait_after_solver(page: Any, debug: dict[str, Any]) -> bool:
+    deadline = time.monotonic() + 20
+    while time.monotonic() <= deadline:
+        if has_search_results(page):
+            return True
+        page_text = f"{browser_html(page)}\n{browser_body_text(page, timeout_ms=800)}"
+        if not is_cloudflare_check(page_text):
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=1_000)
+            except Exception:
+                pass
+            if has_search_results(page):
+                return True
+        page.wait_for_timeout(RESULT_POLL_INTERVAL_MS)
 
+    debug["attempted"].append({
+        "url": str(getattr(page, "url", "") or SEARCH_ORIGIN),
+        "fetcher": "post-solver-wait",
+        "resultReady": has_search_results(page),
+    })
+    return has_search_results(page)
+
+
+def collect_results_by_form(query: str, max_results: int, debug: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     results: list[dict[str, str]] = []
     seen: set[str] = set()
     final_url = SEARCH_ORIGIN
@@ -487,15 +813,12 @@ def collect_results_by_form(query: str, max_results: int, debug: dict[str, Any])
 
         try:
             session._cloudflare_solver(page)
-            try:
-                page.wait_for_load_state("networkidle", timeout=20_000)
-            except Exception:
-                pass
-            page.wait_for_timeout(3_000)
+            result_ready = wait_after_solver(page, debug)
             debug["attempted"].append({
                 "url": str(getattr(page, "url", "") or SEARCH_ORIGIN),
                 "fetcher": "stealth-form-post-cloudflare",
-                "solved": not is_cloudflare_check(f"{browser_html(page)}\n{browser_body_text(page)}"),
+                "solved": not is_cloudflare_check(f"{browser_html(page)}\n{browser_body_text(page, timeout_ms=800)}"),
+                "resultReady": result_ready,
             })
         except Exception as error:
             debug["attempted"].append({
@@ -543,8 +866,8 @@ def collect_results_by_form(query: str, max_results: int, debug: dict[str, Any])
 
         final_url = str(getattr(page, "url", "") or SEARCH_ORIGIN)
         search_html = browser_html(page)
-        candidates = parse_search_candidates(search_html, final_url)
-        max_candidates = min(len(candidates), MAX_POPUP_DETAILS, max(max_results, 6))
+        candidates = prioritize_candidates(parse_search_candidates(search_html, final_url), query, max_results)
+        max_candidates = len(candidates)
         if not max_candidates:
             last_error = "form search reached a page without detail links"
             debug["attempted"].append({
@@ -564,13 +887,23 @@ def collect_results_by_form(query: str, max_results: int, debug: dict[str, Any])
             "candidates": max_candidates,
         })
 
-        for candidate in candidates[:max_candidates]:
+        detail_pages = fetch_detail_pages_in_browser(page, candidates, debug)
+        popup_candidates: list[dict[str, str]] = []
+        for candidate in candidates:
+            if len(results) >= max_results:
+                break
+
             item = dict(candidate)
-            if not item.get("magnet") and item.get("detailUrl"):
-                resolved = click_detail_popup(page, item, debug)
-                if not resolved:
+            detail_url = item.get("detailUrl", "")
+            if not item.get("magnet") and detail_url:
+                detail_page = detail_pages.get(detail_url)
+                if detail_page:
+                    item["magnet"] = detail_page.get("magnet", "")
+                    item["source"] = detail_page.get("source", detail_url)
+                    item["fileSize"] = item.get("fileSize") or detail_page.get("fileSize", "")
+                else:
+                    popup_candidates.append(item)
                     continue
-                item = resolved
 
             magnet = item.get("magnet", "")
             key = magnet.lower()
@@ -579,19 +912,44 @@ def collect_results_by_form(query: str, max_results: int, debug: dict[str, Any])
             seen.add(key)
             results.append(item)
 
+        for candidate in popup_candidates:
+            if len(results) >= max_results:
+                break
+
+            resolved = click_detail_popup(page, candidate, debug)
+            if not resolved:
+                continue
+
+            magnet = resolved.get("magnet", "")
+            key = magnet.lower()
+            if not magnet or key in seen:
+                continue
+            seen.add(key)
+            results.append(resolved)
+
     timeout_seconds = max(
         REQUEST_TIMEOUT_SECONDS,
-        FORM_RESULT_WAIT_SECONDS + min(MAX_POPUP_DETAILS, max(max_results, 6)) * DETAIL_POPUP_WAIT_SECONDS + 30,
+        FORM_RESULT_WAIT_SECONDS + candidate_fetch_limit(max_results) * DETAIL_POPUP_WAIT_SECONDS + 30,
     )
-    with StealthySession(**build_stealth_kwargs(timeout_seconds, False)) as session:
-        session_holder["session"] = session
-        page = session.fetch(
-            SEARCH_ORIGIN,
-            page_action=submit_search,
-            solve_cloudflare=False,
-            timeout=timeout_seconds * 1000,
-            network_idle=True,
-        )
+    session = get_stealth_session(timeout_seconds)
+    session_holder["session"] = session
+    fetch_lock = SESSION_FETCH_LOCK if KEEP_SESSION else threading.Lock()
+    try:
+        with fetch_lock:
+            page = session.fetch(
+                SEARCH_ORIGIN,
+                page_action=submit_search,
+                solve_cloudflare=False,
+                timeout=timeout_seconds * 1000,
+                network_idle=False,
+            )
+    except Exception:
+        if KEEP_SESSION:
+            reset_stealth_session()
+        raise
+    finally:
+        if not KEEP_SESSION:
+            session.close()
 
     if not final_url:
         final_url = str(getattr(page, "url", "") or SEARCH_ORIGIN)
@@ -621,12 +979,15 @@ def collect_from_html(
     if is_cloudflare_check(html_text):
         return None, "仍然遇到 Cloudflare 校验。"
 
-    candidates = parse_search_candidates(html_text, final_url)[:16]
+    candidates = prioritize_candidates(parse_search_candidates(html_text, final_url), query, max_results)
     results: list[dict[str, str]] = []
     seen: set[str] = set()
     last_error = ""
 
     for candidate in candidates:
+        if len(results) >= max_results:
+            break
+
         item = dict(candidate)
         if not item.get("magnet") and item.get("detailUrl"):
             try:
@@ -640,6 +1001,7 @@ def collect_from_html(
                 detail_magnets = parse_magnets(detail_html)
                 item["magnet"] = detail_magnets[0] if detail_magnets else ""
                 item["source"] = detail_url
+                item["fileSize"] = item.get("fileSize") or extract_file_size(detail_html)
             except Exception as error:
                 last_error = str(error)
                 continue
@@ -667,6 +1029,10 @@ def collect_from_html(
 
 
 def collect_results(query: str, max_results: int, first_url: str = "") -> dict[str, Any]:
+    cached = get_cached_result(query, max_results, first_url)
+    if cached:
+        return cached
+
     query_variants = build_query_variants(query)
     primary_query = query_variants[0] if query_variants else normalize_query(query)
     search_targets: list[tuple[str, str]] = []
@@ -684,6 +1050,7 @@ def collect_results(query: str, max_results: int, first_url: str = "") -> dict[s
         try:
             payload, last_error = collect_results_by_form(primary_query, max_results, debug)
             if payload:
+                put_cached_result(query, max_results, first_url, payload)
                 return payload
         except ModuleNotFoundError as error:
             raise RuntimeError('缺少 Scrapling：请先运行 pip install "scrapling[fetchers]" && scrapling install') from error
@@ -697,6 +1064,7 @@ def collect_results(query: str, max_results: int, first_url: str = "") -> dict[s
             debug["attempted"].append({"url": search_url, "finalUrl": final_url, "fetcher": fetcher, "status": status})
             payload, last_error = collect_from_html(search_query, max_results, html_text, final_url, debug)
             if payload:
+                put_cached_result(query, max_results, first_url, payload)
                 return payload
         except ModuleNotFoundError as error:
             raise RuntimeError('缺少 Scrapling：请先运行 pip install "scrapling[fetchers]" && scrapling install') from error
@@ -708,6 +1076,7 @@ def collect_results(query: str, max_results: int, first_url: str = "") -> dict[s
         try:
             payload, last_error = collect_results_by_form(primary_query, max_results, debug)
             if payload:
+                put_cached_result(query, max_results, first_url, payload)
                 return payload
         except Exception as error:
             last_error = str(error)
@@ -723,15 +1092,15 @@ def collect_results(query: str, max_results: int, first_url: str = "") -> dict[s
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SkrbtsoScraplingHelper/0.2"
+    server_version = "SkrbtsoScraplingHelper/0.6"
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", CORS_ALLOW_ORIGIN)
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -749,7 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/health":
-            self._send_json(200, {"ok": True})
+            self._send_json(200, {"ok": True, "service": "skrbtso-helper", "searchOrigin": SEARCH_ORIGIN})
             return
 
         if parsed.path not in {"/skrbtso/search", "/search"}:
@@ -764,7 +1133,7 @@ class Handler(BaseHTTPRequestHandler):
         query = (params.get("q") or params.get("query") or [""])[0].strip()
         first_url = unquote((params.get("url") or [""])[0].strip())
         try:
-            max_results = max(1, min(20, int((params.get("max") or [DEFAULT_MAX_RESULTS])[0])))
+            max_results = max(1, min(MAX_RESULTS_LIMIT, int((params.get("max") or [DEFAULT_MAX_RESULTS])[0])))
         except ValueError:
             max_results = DEFAULT_MAX_RESULTS
 
@@ -773,8 +1142,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if first_url and not is_search_url(first_url):
-            self._send_json(400, {"ok": False, "error": "url must point to skrbtso.top"})
+            self._send_json(400, {"ok": False, "error": f"url must point to {', '.join(sorted(ALLOWED_SEARCH_HOSTS))}"})
             return
+        first_url = normalize_first_search_url(first_url)
 
         if not REQUEST_SEMAPHORE.acquire(blocking=False):
             self._send_json(429, {"ok": False, "error": "Helper is busy; retry later"})
@@ -799,8 +1169,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"skrbtso helper listening on http://{HOST}:{PORT}/skrbtso/search", flush=True)
+    server_class = HTTPServer if KEEP_SESSION else ThreadingHTTPServer
+    server = server_class((HOST, PORT), Handler)
+    mode = "single-thread keep-session" if KEEP_SESSION else "threaded stateless-session"
+    print(
+        f"skrbtso helper listening on http://{HOST}:{PORT}/skrbtso/search "
+        f"({mode}, origin={SEARCH_ORIGIN}, max={MAX_RESULTS_LIMIT})",
+        flush=True,
+    )
     server.serve_forever()
 
 
